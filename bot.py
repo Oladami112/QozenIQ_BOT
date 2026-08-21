@@ -1,11 +1,10 @@
 import os
 import logging
-import threading
-import sys
+import asyncio
 from flask import Flask, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-from telegram.error import InvalidToken, NetworkError
+import threading
 
 # Flask app for healthcheck
 app = Flask(__name__)
@@ -18,7 +17,7 @@ def healthcheck():
 def health():
     return jsonify({"status": "ok"}), 200
 
-# Enable logging with more detail
+# Enable logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -28,15 +27,17 @@ logger = logging.getLogger(__name__)
 # Bot token from environment variable
 TOKEN = os.environ.get('BOT_TOKEN')
 
-# Check if token exists
 if not TOKEN:
     logger.error("❌ BOT_TOKEN environment variable not set!")
-    sys.exit(1)
-else:
-    logger.info(f"✅ Bot token found: {TOKEN[:10]}...")
+    exit(1)
 
-# About text - 116 characters
+logger.info(f"✅ Bot token found: {TOKEN[:10]}...")
+
+# About text (116 characters)
 ABOUT_TEXT = """🤖 QozenIQ - Your smart AI assistant for quick answers, info, and insights. Fast, private, and helpful! ✨"""
+
+# Global application variable
+application = None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a message when /start is issued."""
@@ -64,7 +65,6 @@ Type /help to get started! 🚀"""
         parse_mode='Markdown',
         reply_markup=reply_markup
     )
-    logger.info(f"User {user.first_name} started the bot")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a message when /help is issued."""
@@ -170,7 +170,6 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Echo the user message - simple response."""
     user_message = update.message.text
     
-    # Simple responses based on keywords
     if any(word in user_message.lower() for word in ['hello', 'hi', 'hey']):
         response = "👋 Hello there! How can I help you today?"
     elif 'how are you' in user_message.lower():
@@ -191,6 +190,7 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def run_bot():
     """Run the Telegram bot."""
+    global application
     try:
         # Create application
         application = Application.builder().token(TOKEN).build()
@@ -209,29 +209,25 @@ def run_bot():
         from telegram.ext import MessageHandler, filters
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
 
-        # Start the bot
+        # Start the bot with proper event loop
         logger.info("🤖 Bot is starting polling...")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
         
-    except InvalidToken as e:
-        logger.error(f"❌ Invalid Bot Token! Please check your BOT_TOKEN: {e}")
-    except NetworkError as e:
-        logger.error(f"❌ Network Error! Check internet connection: {e}")
     except Exception as e:
-        logger.error(f"❌ Unexpected error: {e}")
+        logger.error(f"❌ Bot error: {e}")
 
-def run_web():
-    """Run the Flask web server for healthchecks."""
+def run_flask():
+    """Run Flask app."""
     port = int(os.environ.get('PORT', 8080))
     logger.info(f"🌐 Web server running on port {port}")
-    app.run(host='0.0.0.0', port=port, debug=False)
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 if __name__ == '__main__':
     logger.info("🚀 Starting QozenIQ Bot...")
     
-    # Run bot in a separate thread
+    # Run bot in a separate thread with its own event loop
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
     
-    # Run web server (blocks)
-    run_web()
+    # Run Flask in main thread
+    run_flask()
