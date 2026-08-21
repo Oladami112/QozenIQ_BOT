@@ -1,21 +1,11 @@
 import os
 import logging
-import asyncio
-from flask import Flask, jsonify
+from flask import Flask, request, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-import threading
 
-# Flask app for healthcheck
+# Flask app
 app = Flask(__name__)
-
-@app.route('/')
-def healthcheck():
-    return jsonify({"status": "healthy", "message": "QozenIQ Bot is running!"}), 200
-
-@app.route('/health')
-def health():
-    return jsonify({"status": "ok"}), 200
 
 # Enable logging
 logging.basicConfig(
@@ -24,11 +14,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Bot token from environment variable
+# Bot token
 TOKEN = os.environ.get('BOT_TOKEN')
-
 if not TOKEN:
-    logger.error("❌ BOT_TOKEN environment variable not set!")
+    logger.error("❌ BOT_TOKEN not set!")
     exit(1)
 
 logger.info(f"✅ Bot token found: {TOKEN[:10]}...")
@@ -36,11 +25,11 @@ logger.info(f"✅ Bot token found: {TOKEN[:10]}...")
 # About text (116 characters)
 ABOUT_TEXT = """🤖 QozenIQ - Your smart AI assistant for quick answers, info, and insights. Fast, private, and helpful! ✨"""
 
-# Global application variable
-application = None
+# Create application
+application = Application.builder().token(TOKEN).build()
 
+# Command handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send a message when /start is issued."""
     user = update.effective_user
     welcome_message = f"""👋 *Welcome to QozenIQ, {user.first_name}!*
 
@@ -67,7 +56,6 @@ Type /help to get started! 🚀"""
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send a message when /help is issued."""
     help_text = """📚 *QozenIQ Bot Commands*
 
 🤖 *Basic Commands:*
@@ -96,7 +84,6 @@ Contact @QozenIQ_Support for assistance"""
     )
 
 async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send a message when /about is issued."""
     keyboard = [
         [InlineKeyboardButton("🔙 Back to Start", callback_data='start')]
     ]
@@ -109,14 +96,12 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send a message when /ping is issued."""
     await update.message.reply_text(
         "🏓 *Pong!*\n\nBot is online and ready! ✅",
         parse_mode='Markdown'
     )
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle button callbacks."""
     query = update.callback_query
     await query.answer()
     
@@ -167,7 +152,6 @@ Commands:
         )
 
 async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Echo the user message - simple response."""
     user_message = update.message.text
     
     if any(word in user_message.lower() for word in ['hello', 'hi', 'hey']):
@@ -188,46 +172,86 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-def run_bot():
-    """Run the Telegram bot."""
-    global application
+# Register handlers
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("help", help_command))
+application.add_handler(CommandHandler("about", about_command))
+application.add_handler(CommandHandler("ping", ping_command))
+application.add_handler(CallbackQueryHandler(button_callback))
+
+from telegram.ext import MessageHandler, filters
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+
+# Flask routes
+@app.route('/')
+def healthcheck():
+    return jsonify({"status": "healthy", "message": "QozenIQ Bot is running!"}), 200
+
+@app.route('/health')
+def health():
+    return jsonify({"status": "ok"}), 200
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """Handle incoming updates via webhook."""
     try:
-        # Create application
-        application = Application.builder().token(TOKEN).build()
-        logger.info("✅ Application built successfully")
-
-        # Add command handlers
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CommandHandler("about", about_command))
-        application.add_handler(CommandHandler("ping", ping_command))
-        
-        # Add callback query handler for buttons
-        application.add_handler(CallbackQueryHandler(button_callback))
-        
-        # Handle non-command messages
-        from telegram.ext import MessageHandler, filters
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
-
-        # Start the bot with proper event loop
-        logger.info("🤖 Bot is starting polling...")
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
-        
+        update = Update.de_json(request.get_json(force=True), application.bot)
+        application.process_update(update)
+        return jsonify({"status": "ok"}), 200
     except Exception as e:
-        logger.error(f"❌ Bot error: {e}")
+        logger.error(f"Webhook error: {e}")
+        return jsonify({"status": "error"}), 500
 
-def run_flask():
-    """Run Flask app."""
-    port = int(os.environ.get('PORT', 8080))
-    logger.info(f"🌐 Web server running on port {port}")
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+@app.route('/set_webhook', methods=['GET'])
+def set_webhook():
+    """Set the webhook URL (for debugging)."""
+    railway_url = os.environ.get('RAILWAY_PUBLIC_DOMAIN', '')
+    if not railway_url:
+        return jsonify({"error": "RAILWAY_PUBLIC_DOMAIN not set"}), 400
+    
+    webhook_url = f"https://{railway_url}/webhook"
+    try:
+        application.bot.set_webhook(webhook_url)
+        return jsonify({
+            "status": "success", 
+            "webhook_url": webhook_url,
+            "message": "Webhook set successfully!"
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/remove_webhook', methods=['GET'])
+def remove_webhook():
+    """Remove webhook (for debugging)."""
+    try:
+        application.bot.delete_webhook()
+        return jsonify({"status": "success", "message": "Webhook removed!"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    logger.info("🚀 Starting QozenIQ Bot...")
+    port = int(os.environ.get('PORT', 8080))
     
-    # Run bot in a separate thread with its own event loop
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
+    # Initialize bot before starting
+    logger.info("🚀 Starting QozenIQ Bot with webhook...")
     
-    # Run Flask in main thread
-    run_flask()
+    # For local testing, use polling
+    if os.environ.get('ENV') == 'local':
+        logger.info("🤖 Running in polling mode (local)...")
+        application.run_polling()
+    else:
+        # In production, set webhook
+        railway_url = os.environ.get('RAILWAY_PUBLIC_DOMAIN', '')
+        if railway_url:
+            webhook_url = f"https://{railway_url}/webhook"
+            try:
+                application.bot.set_webhook(webhook_url)
+                logger.info(f"✅ Webhook set to: {webhook_url}")
+            except Exception as e:
+                logger.error(f"❌ Failed to set webhook: {e}")
+        else:
+            logger.warning("⚠️ RAILWAY_PUBLIC_DOMAIN not set, webhook won't work")
+        
+        # Run Flask
+        logger.info(f"🌐 Web server running on port {port}")
+        app.run(host='0.0.0.0', port=port, debug=False)
