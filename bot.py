@@ -1,9 +1,11 @@
 import os
 import logging
 import threading
+import sys
 from flask import Flask, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.error import InvalidToken, NetworkError
 
 # Flask app for healthcheck
 app = Flask(__name__)
@@ -16,7 +18,7 @@ def healthcheck():
 def health():
     return jsonify({"status": "ok"}), 200
 
-# Enable logging
+# Enable logging with more detail
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -26,30 +28,15 @@ logger = logging.getLogger(__name__)
 # Bot token from environment variable
 TOKEN = os.environ.get('BOT_TOKEN')
 
-# About text - Professional and policy compliant
-ABOUT_TEXT = """🤖 *About QozenIQ Bot*
+# Check if token exists
+if not TOKEN:
+    logger.error("❌ BOT_TOKEN environment variable not set!")
+    sys.exit(1)
+else:
+    logger.info(f"✅ Bot token found: {TOKEN[:10]}...")
 
-Welcome to QozenIQ - Your intelligent assistant for quick answers and smart insights!
-
-✨ *Features:*
-• 📝 Quick answers to your questions
-• 🔍 Smart search capabilities  
-• 📊 Information at your fingertips
-• ⚡ Lightning-fast responses
-
-🔒 *Privacy First:*
-We respect your privacy. No personal data is stored or shared.
-
-💡 *How to use:*
-Simply type /help to see all available commands
-
-📱 *Contact:*
-For support or feedback, reach out to @QozenIQ_Support
-
-*Version:* 1.0.0
-*Status:* 🟢 Active
-
-© 2026 QozenIQ - All rights reserved."""
+# About text - 116 characters
+ABOUT_TEXT = """🤖 QozenIQ - Your smart AI assistant for quick answers, info, and insights. Fast, private, and helpful! ✨"""
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a message when /start is issued."""
@@ -59,9 +46,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 Your intelligent assistant is ready to help you.
 
 📌 *Quick Start:*
-• Use /help to see all commands
-• Use /about to learn more about me
-• Use /ping to check if I'm online
+• /help - See all commands
+• /about - Learn more
+• /ping - Check status
 
 Type /help to get started! 🚀"""
 
@@ -77,28 +64,24 @@ Type /help to get started! 🚀"""
         parse_mode='Markdown',
         reply_markup=reply_markup
     )
+    logger.info(f"User {user.first_name} started the bot")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a message when /help is issued."""
     help_text = """📚 *QozenIQ Bot Commands*
 
 🤖 *Basic Commands:*
-/start - Start the bot
-/help - Show this help message
+/start - Welcome message
+/help - Show this help
 /about - Learn about QozenIQ
 /ping - Check bot status
 
 💡 *Tips:*
-• Just type your question naturally
+• Type your question naturally
 • I'll try my best to help you
-• Use clear and specific questions
+• Be respectful and kind
 
-⚠️ *Important:*
-• This bot is for informational purposes only
-• Not for illegal activities or spam
-• Please be respectful
-
-🔄 *Need more help?*
+🔄 *Questions?*
 Contact @QozenIQ_Support for assistance"""
 
     keyboard = [
@@ -154,13 +137,11 @@ Ready to help you. Use /help to see commands."""
     elif query.data == 'help':
         help_text = """📚 *Quick Help*
 
-Commands available:
-/start - Welcome message
+Commands:
+/start - Welcome
 /help - This help
 /about - About QozenIQ
-/ping - Check status
-
-What would you like to do?"""
+/ping - Check status"""
         await query.edit_message_text(
             help_text,
             parse_mode='Markdown',
@@ -189,7 +170,7 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Echo the user message - simple response."""
     user_message = update.message.text
     
-    # Simple responses based on keywords (policy compliant)
+    # Simple responses based on keywords
     if any(word in user_message.lower() for word in ['hello', 'hi', 'hey']):
         response = "👋 Hello there! How can I help you today?"
     elif 'how are you' in user_message.lower():
@@ -201,7 +182,7 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif 'about' in user_message.lower():
         response = "ℹ️ Type /about to learn more about QozenIQ."
     else:
-        response = f"🤔 I received your message: '{user_message}'\n\nTo get started, type /help for available commands."
+        response = f"🤔 Got: '{user_message}'\n\nType /help for available commands."
     
     await update.message.reply_text(
         response,
@@ -210,37 +191,47 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def run_bot():
     """Run the Telegram bot."""
-    # Create application
-    application = Application.builder().token(TOKEN).build()
+    try:
+        # Create application
+        application = Application.builder().token(TOKEN).build()
+        logger.info("✅ Application built successfully")
 
-    # Add command handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("about", about_command))
-    application.add_handler(CommandHandler("ping", ping_command))
-    
-    # Add callback query handler for buttons
-    application.add_handler(CallbackQueryHandler(button_callback))
-    
-    # Handle non-command messages (must be last)
-    from telegram.ext import MessageHandler, filters
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+        # Add command handlers
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("about", about_command))
+        application.add_handler(CommandHandler("ping", ping_command))
+        
+        # Add callback query handler for buttons
+        application.add_handler(CallbackQueryHandler(button_callback))
+        
+        # Handle non-command messages
+        from telegram.ext import MessageHandler, filters
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
 
-    # Start the bot
-    print("🤖 Bot is starting...")
-    application.run_polling()
+        # Start the bot
+        logger.info("🤖 Bot is starting polling...")
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
+        
+    except InvalidToken as e:
+        logger.error(f"❌ Invalid Bot Token! Please check your BOT_TOKEN: {e}")
+    except NetworkError as e:
+        logger.error(f"❌ Network Error! Check internet connection: {e}")
+    except Exception as e:
+        logger.error(f"❌ Unexpected error: {e}")
 
 def run_web():
     """Run the Flask web server for healthchecks."""
     port = int(os.environ.get('PORT', 8080))
-    print(f"🌐 Web server running on port {port}")
-    app.run(host='0.0.0.0', port=port)
+    logger.info(f"🌐 Web server running on port {port}")
+    app.run(host='0.0.0.0', port=port, debug=False)
 
 if __name__ == '__main__':
-    # Run bot and web server in parallel
-    bot_thread = threading.Thread(target=run_bot)
-    bot_thread.daemon = True
+    logger.info("🚀 Starting QozenIQ Bot...")
+    
+    # Run bot in a separate thread
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
     
-    # Run web server (this blocks)
+    # Run web server (blocks)
     run_web()
