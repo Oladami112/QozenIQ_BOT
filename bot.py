@@ -1,7 +1,20 @@
 import os
 import logging
+import threading
+from flask import Flask, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+
+# Flask app for healthcheck
+app = Flask(__name__)
+
+@app.route('/')
+def healthcheck():
+    return jsonify({"status": "healthy", "message": "QozenIQ Bot is running!"}), 200
+
+@app.route('/health')
+def health():
+    return jsonify({"status": "ok"}), 200
 
 # Enable logging
 logging.basicConfig(
@@ -195,8 +208,8 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-def main():
-    """Start the bot."""
+def run_bot():
+    """Run the Telegram bot."""
     # Create application
     application = Application.builder().token(TOKEN).build()
 
@@ -209,9 +222,6 @@ def main():
     # Add callback query handler for buttons
     application.add_handler(CallbackQueryHandler(button_callback))
     
-    # Add echo handler for text messages
-    application.add_handler(CommandHandler("echo", echo))
-    
     # Handle non-command messages (must be last)
     from telegram.ext import MessageHandler, filters
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
@@ -220,5 +230,17 @@ def main():
     print("🤖 Bot is starting...")
     application.run_polling()
 
+def run_web():
+    """Run the Flask web server for healthchecks."""
+    port = int(os.environ.get('PORT', 8080))
+    print(f"🌐 Web server running on port {port}")
+    app.run(host='0.0.0.0', port=port)
+
 if __name__ == '__main__':
-    main()
+    # Run bot and web server in parallel
+    bot_thread = threading.Thread(target=run_bot)
+    bot_thread.daemon = True
+    bot_thread.start()
+    
+    # Run web server (this blocks)
+    run_web()
