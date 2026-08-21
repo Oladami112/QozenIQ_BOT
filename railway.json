@@ -3,7 +3,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "gunicorn --workers=2 --threads=4 --worker-class=gthread bot:app",
+    "startCommand": "python bot.py",
     "healthcheckPath": "/",
     "restartPolicyType": "ON_FAILURE"
   }
